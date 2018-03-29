@@ -53,4 +53,5 @@ spec:
     args:
       - -logtostderr=true
       - -v=2
+      - -clustername=kubernetes-cluster
   restartPolicy: Always

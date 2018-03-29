@@ -5,62 +5,41 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	//appsv1 "k8s.io/api/apps/v1"
+
 	corev1 "k8s.io/api/core/v1"
-	//"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	//kubeinformers "k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-
-	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	//lister_v1 "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/workqueue"
-	//"k8s.io/client-go/pkg/api/v1"
-
-	//samplev1alpha1 "k8s.io/sample-controller/pkg/apis/samplecontroller/v1alpha1"
-	//clientset "k8s.io/sample-controller/pkg/client/clientset/versioned"
-	//"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/scheme"
-	//informers "k8s.io/sample-controller/pkg/client/informers/externalversions"
-	//listers "k8s.io/sample-controller/pkg/client/listers/samplecontroller/v1alpha1"
-
 	// not sure
 	"k8s.io/apimachinery/pkg/fields"
 
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/client-go/kubernetes/scheme"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ec2"
-	"strings"
-  "strconv"
 )
 
 const (
 	controllerAgentName = "kube-sg-controller"
-	// SuccessSynced is used as part of the Event 'reason' when a Foo is synced
-	SuccessSynced = "Synced"
-	// ErrResourceExists is used as part of the Event 'reason' when a Foo fails
-	// to sync due to a Deployment of the same name already existing.
-	ErrResourceExists = "ErrResourceExists"
-	// MessageResourceExists is the message used for Events when a resource
-	// fails to sync due to a Deployment already existing
-	// MessageResourceSynced is the message used for an Event fired when a Foo
-	// is synced successfully
 	resyncPeriod = 15 * time.Minute
-
 	maxRetries = 5
 )
 
 type Controller struct {
 	kubeclientset kubernetes.Interface
 	informer      cache.SharedIndexInformer
-	queue     workqueue.RateLimitingInterface
+	queue         workqueue.RateLimitingInterface
 	recorder      record.EventRecorder
+	clusterName   string
+	region        string
 	//eventHandler  handlers.Handler
 	//podLister lister_v1.PodLister
 	//podController       *cache.Controller
@@ -68,12 +47,12 @@ type Controller struct {
 }
 
 type Task struct {
-	Annotation string
-	CidrIp     string
 	Key        string
+	CidrIp     string
+	Annotation string
 }
 
-func NewController(kubeclientset kubernetes.Interface) *Controller {
+func NewController(kubeclientset kubernetes.Interface, clusterName string) *Controller {
 
 	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
 
@@ -91,7 +70,11 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		AddFunc: func(obj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.AddRateLimited(Task{obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],obj.(*corev1.Pod).Status.PodIP + "/32", key})
+				queue.AddRateLimited(Task{
+					key,
+					obj.(*corev1.Pod).Status.PodIP + "/32",
+					obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+				})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -100,7 +83,11 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		UpdateFunc: func(old, new interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(new)
 			if err == nil {
-				queue.AddRateLimited(Task{new.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],new.(*corev1.Pod).Status.PodIP + "/32", key})
+				queue.AddRateLimited(Task{
+					key,
+					new.(*corev1.Pod).Status.PodIP + "/32",
+					new.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+				})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -109,7 +96,11 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		DeleteFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.AddRateLimited(Task{obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],obj.(*corev1.Pod).Status.PodIP + "/32", key})
+				queue.AddRateLimited(Task{
+					key,
+					obj.(*corev1.Pod).Status.PodIP + "/32",
+					obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+				})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -128,7 +119,8 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		informer:      informer,
 		queue:         queue,
 		recorder:      recorder,
-		//eventHandler: eventHandler,
+		clusterName:   clusterName,
+		region:        getRegion(),
 	}
 
   //controller.informer = informer
@@ -210,101 +202,50 @@ func (c *Controller) processNext() bool {
 // converge the two. It then updates the Status block of the Foo resource
 // with the current status of the resource.
 func (c *Controller) process(key Task) error {
+
+	description := c.clusterName + "/" + key.Key
+	rules := fromAnnotationsToRules(key.Annotation, key.CidrIp, description)
+
+	if len(rules) == 0 {
+		return nil
+	}
+
 	obj, exists, err := c.informer.GetIndexer().GetByKey(key.Key)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve pod by key %q: %v", key.Key, err)
 	}
 
-	description := key.Key
-	cidrIp := key.CidrIp
-	rules := fromAnnotationsToRules(key.Annotation)
-
-	sess := session.New(&aws.Config{Region: aws.String("us-east-1")})
-  svc := ec2.New(sess)
+	sess := session.New(&aws.Config{Region: aws.String(c.region)})
+	svc := ec2.New(sess)
 
 	if !exists {
 
-		for _, rule := range rules {
-			from, _ := strconv.ParseInt(rule["from"], 10, 64)
-			to, _ := strconv.ParseInt(rule["to"], 10, 64)
+		for id := range rules {
 			_, err = svc.RevokeSecurityGroupIngress(&ec2.RevokeSecurityGroupIngressInput{
-		        GroupId: aws.String(rule["id"]),
-		        IpPermissions: []*ec2.IpPermission{
-		            (&ec2.IpPermission{}).
-										SetIpProtocol(rule["protocol"]).
-										SetFromPort(from).
-		                SetToPort(to).
-		                SetIpRanges([]*ec2.IpRange{
-		                    {
-													CidrIp: aws.String(cidrIp),
-													Description: aws.String(description),
-												},
-		                }),
-		        },
+		        GroupId: aws.String(id),
+		        IpPermissions: rules[id],
 		    })
 				if err != nil {
 					glog.Info(err)
 				}
 		}
 
-		glog.Info("Delete sg")
+		glog.Infof("security groups ingress rules deleted for '%s': '%s', pod IP: %s", key.Key, key.Annotation, key.CidrIp)
 		return nil
 	}
 
-	//cidrIp := obj.(*corev1.Pod).Status.PodIP + "/32"
-
-	for _, rule := range rules {
-		from, _ := strconv.ParseInt(rule["from"], 10, 64)
-		to, _ := strconv.ParseInt(rule["to"], 10, 64)
+	for id := range rules {
 		_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
-	        GroupId: aws.String(rule["id"]),
-	        IpPermissions: []*ec2.IpPermission{
-	            (&ec2.IpPermission{}).
-	                SetIpProtocol(rule["protocol"]).
-	                SetFromPort(from).
-	                SetToPort(to).
-	                SetIpRanges([]*ec2.IpRange{
-	                    {
-												CidrIp: aws.String(cidrIp),
-												Description: aws.String(description),
-											},
-	                }),
-	        },
-	    })
+			GroupId: aws.String(id),
+	    IpPermissions: rules[id],
+	  })
+		if err != nil {
+			glog.Info(err)
+		}
 	}
 
-	glog.Infof("Update or create sg %s %s %s", obj.(*corev1.Pod).Name, obj.(*corev1.Pod).Status.PodIP, key)
+	glog.Infof("security groups ingress rules created for '%s': '%s', pod IP: %s", key.Key, key.Annotation, key.CidrIp)
+	c.recorder.Eventf(obj.(*corev1.Pod), corev1.EventTypeNormal, "pod created", "security groups ingress rules created: %s", key.Annotation)
 	return nil
 
-}
-
-func fromAnnotationsToRules(annotations string) []map[string]string {
-
-	var rules []map[string]string
-
-	for _, rule := range strings.Split(annotations, ",") {
-		s := strings.Split(rule, ":")
-		if len(s) == 3 {
-			ports := strings.Split(s[2], "-")
-			if len(ports) == 2 {
-				ruleItem := map[string]string{
-					"id"      : s[0],
-					"protocol": s[1],
-					"from":     ports[0],
-					"to":       ports[1],
-				}
-				rules = append(rules, ruleItem)
-			} else if len(ports) == 1 {
-				ruleItem := map[string]string{
-					"id"      : s[0],
-					"protocol": s[1],
-					"from":     ports[0],
-					"to":       ports[0],
-				}
-				rules = append(rules, ruleItem)
-			}
-		}
-  }
-
-	return rules
 }

@@ -40,24 +40,27 @@ kind: Pod
 metadata:
 annotations:
   sg.amazonaws.com/ingress: sg-1a2b3c4d:tcp:5000-5050/sg-1a2b3c4d:tcp:443/sg-1a2b3c4d:udp:7000-7005
+...
 ```
 
 When creating higher-level abstractions than pods, you need to pass the annotation in the pod template of the
 resource spec.
 
 ```yaml
+...
 spec:
   template:
     metadata:
       annotations:
         sg.amazonaws.com/ingress: sg-1a2b3c4d:tcp:5000-5050/sg-1a2b3c4d:tcp:443/sg-1a2b3c4d:udp:7000-7005
+...
 ```
 
 ## Installation
 
-**Note: kube-sg assumes that pods IPs allocated from the VPC pool.**
+**Note: kube-sg assumes that pods IPs allocated from the same VPC pool where your resources are located or pods and resources are in the same network.**
 
-To use kube-sg
+To install kube-sg: first maek sure that you attach the following IAM policy to the master node:
 ```json
 {
             "Action": [
@@ -72,9 +75,7 @@ To use kube-sg
 }
 ```
 
-
-CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o kube-sg .
-
-docker build . -t abdullahalmariah/kube-sg:v0.0.1
-
-docker push abdullahalmariah/kube-sg:v0.0.1
+Then deploy kube-sg controller:
+```bash
+kubectl apply -f kube-sg.yaml
+```

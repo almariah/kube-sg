@@ -15,12 +15,17 @@ import (
 )
 
 var (
-	masterURL  string
-	kubeconfig string
+	masterURL   string
+	kubeconfig  string
+	clusterName string
 )
 
 func main() {
 	flag.Parse()
+
+	if clusterName == "" {
+		glog.Fatal("clustername is required")
+	}
 
 	// set up signals so we handle the first shutdown signal gracefully
 	stopCh := signals.SetupSignalHandler()
@@ -38,7 +43,7 @@ func main() {
 	//kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
 	//exampleInformerFactory := informers.NewSharedInformerFactory(exampleClient, time.Second*30)
 
-	controller := NewController(kubeClient)
+	controller := NewController(kubeClient, clusterName)
 
 	//go kubeInformerFactory.Start(stopCh)
 	//go exampleInformerFactory.Start(stopCh)
@@ -51,4 +56,5 @@ func main() {
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
 	flag.StringVar(&masterURL, "master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
+	flag.StringVar(&clusterName, "clustername", "", "The name of the Kubernetes cluster server.")
 }
