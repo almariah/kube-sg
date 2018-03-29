@@ -1,6 +1,8 @@
 # kube-sg
 A controller that set ingress rules of AWS security groups using pod IP based on annotations.
 
+## Overview
+
 A network policy `NetworkPolicy` is used to specify how groups of pods are allowed to communicate with each other and other network endpoints. An example `NetworkPolicy` might look like this:
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -56,7 +58,7 @@ spec:
 ...
 ```
 
-## Installation
+## Installation (kube-sg still experimental)
 
 **Note: kube-sg assumes that pods IPs allocated from the same VPC pool where your resources are located or pods and resources are in the same network.**
 
