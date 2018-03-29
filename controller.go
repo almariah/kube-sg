@@ -67,6 +67,12 @@ type Controller struct {
 	//informer   *cache.Controller
 }
 
+type Task struct {
+	Annotation string
+	CidrIp     string
+	Key        string
+}
+
 func NewController(kubeclientset kubernetes.Interface) *Controller {
 
 	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
@@ -85,7 +91,7 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		AddFunc: func(obj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.AddRateLimited(key)
+				queue.AddRateLimited(Task{obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],obj.(*corev1.Pod).Status.PodIP + "/32", key})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -94,7 +100,7 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		UpdateFunc: func(old, new interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(new)
 			if err == nil {
-				queue.AddRateLimited(key)
+				queue.AddRateLimited(Task{new.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],new.(*corev1.Pod).Status.PodIP + "/32", key})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -103,7 +109,7 @@ func NewController(kubeclientset kubernetes.Interface) *Controller {
 		DeleteFunc: func(obj interface{}) {
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.AddRateLimited(key)
+				queue.AddRateLimited(Task{obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],obj.(*corev1.Pod).Status.PodIP + "/32", key})
 			} else {
 				runtime.HandleError(err)
 				return
@@ -183,7 +189,7 @@ func (c *Controller) processNext() bool {
 	}
 	defer c.queue.Done(key)
 
-	err := c.process(key.(string))
+	err := c.process(key.(Task))
 	if err == nil {
 		// No error, reset the ratelimit counters
 		c.queue.Forget(key)
@@ -203,39 +209,49 @@ func (c *Controller) processNext() bool {
 // syncHandler compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the Foo resource
 // with the current status of the resource.
-func (c *Controller) process(key string) error {
-	obj, exists, err := c.informer.GetIndexer().GetByKey(key)
+func (c *Controller) process(key Task) error {
+	obj, exists, err := c.informer.GetIndexer().GetByKey(key.Key)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve pod by key %q: %v", key, err)
+		return fmt.Errorf("failed to retrieve pod by key %q: %v", key.Key, err)
 	}
 
-	description := key
+	description := key.Key
+	cidrIp := key.CidrIp
+	rules := fromAnnotationsToRules(key.Annotation)
 
 	sess := session.New(&aws.Config{Region: aws.String("us-east-1")})
   svc := ec2.New(sess)
 
 	if !exists {
 
-		/*for _, rule := range rules {
-			_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
+		for _, rule := range rules {
+			from, _ := strconv.ParseInt(rule["from"], 10, 64)
+			to, _ := strconv.ParseInt(rule["to"], 10, 64)
+			_, err = svc.RevokeSecurityGroupIngress(&ec2.RevokeSecurityGroupIngressInput{
 		        GroupId: aws.String(rule["id"]),
 		        IpPermissions: []*ec2.IpPermission{
 		            (&ec2.IpPermission{}).
+										SetIpProtocol(rule["protocol"]).
+										SetFromPort(from).
+		                SetToPort(to).
 		                SetIpRanges([]*ec2.IpRange{
 		                    {
+													CidrIp: aws.String(cidrIp),
 													Description: aws.String(description),
 												},
 		                }),
 		        },
 		    })
-		}*/
+				if err != nil {
+					glog.Info(err)
+				}
+		}
 
 		glog.Info("Delete sg")
 		return nil
 	}
 
-	cidrIp := obj.(*corev1.Pod).Status.PodIP + "/32"
-	rules := fromAnnotationsToRules(obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"])
+	//cidrIp := obj.(*corev1.Pod).Status.PodIP + "/32"
 
 	for _, rule := range rules {
 		from, _ := strconv.ParseInt(rule["from"], 10, 64)
