@@ -68,10 +68,7 @@ To install kube-sg: first maek sure that you attach the following IAM policy to 
 ```json
 {
             "Action": [
-                "ec2:AuthorizeSecurityGroupEgress",
                 "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:DeleteSecurityGroup",
-                "ec2:RevokeSecurityGroupEgress",
                 "ec2:RevokeSecurityGroupIngress"
             ],
             "Resource": "*",
