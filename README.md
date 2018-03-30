@@ -1,5 +1,5 @@
 # kube-sg
-A controller that set ingress rules of AWS security groups using pod IP based on annotations.
+A Kubernetes controller that set ingress rules of AWS security groups using pod IP based on annotations.
 
 ## Overview
 
