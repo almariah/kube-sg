@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
+	"strings"
 
 	"github.com/golang/glog"
 
@@ -11,7 +12,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	// not sure
 	"k8s.io/apimachinery/pkg/fields"
 
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -29,7 +29,7 @@ import (
 
 const (
 	controllerAgentName = "kube-sg-controller"
-	resyncPeriod = 15 * time.Minute
+	resyncPeriod = 30 * time.Minute
 	maxRetries = 5
 )
 
@@ -40,10 +40,6 @@ type Controller struct {
 	recorder      record.EventRecorder
 	clusterName   string
 	region        string
-	//eventHandler  handlers.Handler
-	//podLister lister_v1.PodLister
-	//podController       *cache.Controller
-	//informer   *cache.Controller
 }
 
 type Task struct {
@@ -63,7 +59,6 @@ func NewController(kubeclientset kubernetes.Interface, clusterName string) *Cont
 		&corev1.Pod{},
 		resyncPeriod,
 		cache.Indexers{},
-		//cache.Indexers{podIPIndexName: kube2iam.PodIPIndexFunc},
 	)
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -72,8 +67,8 @@ func NewController(kubeclientset kubernetes.Interface, clusterName string) *Cont
 			if err == nil {
 				queue.AddRateLimited(Task{
 					key,
-					obj.(*corev1.Pod).Status.PodIP + "/32",
-					obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+					obj.(*corev1.Pod).Status.PodIP,
+					obj.(*corev1.Pod).Annotations["sg.amazonaws.com"],
 				})
 			} else {
 				runtime.HandleError(err)
@@ -85,8 +80,8 @@ func NewController(kubeclientset kubernetes.Interface, clusterName string) *Cont
 			if err == nil {
 				queue.AddRateLimited(Task{
 					key,
-					new.(*corev1.Pod).Status.PodIP + "/32",
-					new.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+					new.(*corev1.Pod).Status.PodIP,
+					new.(*corev1.Pod).Annotations["sg.amazonaws.com"],
 				})
 			} else {
 				runtime.HandleError(err)
@@ -98,8 +93,8 @@ func NewController(kubeclientset kubernetes.Interface, clusterName string) *Cont
 			if err == nil {
 				queue.AddRateLimited(Task{
 					key,
-					obj.(*corev1.Pod).Status.PodIP + "/32",
-					obj.(*corev1.Pod).Annotations["sg.amazonaws.com/ingress"],
+					obj.(*corev1.Pod).Status.PodIP,
+					obj.(*corev1.Pod).Annotations["sg.amazonaws.com"],
 				})
 			} else {
 				runtime.HandleError(err)
@@ -123,23 +118,14 @@ func NewController(kubeclientset kubernetes.Interface, clusterName string) *Cont
 		region:        getRegion(),
 	}
 
-  //controller.informer = informer
-	//controller.podLister = lister_v1.NewPodLister(indexer)
-	//controller.recorder = recorder
-
-
 	return controller
 }
 
-// Run will set up the event handlers for types we are interested in, as well
-// as syncing informer caches and starting workers. It will block until stopCh
-// is closed, at which point it will shutdown the workqueue and wait for
-// workers to finish processing their current work items.
+
 func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 	defer runtime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	// Start the informer factories to begin populating the informer caches
 	glog.Info("Starting kube-sg controller")
 
 	go c.informer.Run(stopCh)
@@ -171,8 +157,8 @@ func (c *Controller) runWorker() {
 	}
 }
 
-// processNextWorkItem will read a single work item off the workqueue and
-// attempt to process it, by calling the syncHandler.
+// processNext will read a single work item off the workqueue and
+// attempt to process it, by calling the process.
 func (c *Controller) processNext() bool {
 	key, quit := c.queue.Get()
 
@@ -198,15 +184,17 @@ func (c *Controller) processNext() bool {
 	return true
 }
 
-// syncHandler compares the actual state with the desired, and attempts to
-// converge the two. It then updates the Status block of the Foo resource
-// with the current status of the resource.
+
 func (c *Controller) process(key Task) error {
 
 	description := c.clusterName + "/" + key.Key
 	rules := fromAnnotationsToRules(key.Annotation, key.CidrIp, description)
 
 	if len(rules) == 0 {
+		return nil
+	}
+
+	if key.CidrIp == "" {
 		return nil
 	}
 
@@ -225,12 +213,15 @@ func (c *Controller) process(key Task) error {
 		        GroupId: aws.String(id),
 		        IpPermissions: rules[id],
 		    })
+
 				if err != nil {
 					glog.Info(err)
+					continue
 				}
+
+				glog.Infof("ingress rules of security group %s deleted: %s, key: %s, pod IP: %s", id, key.Annotation, key.Key, key.CidrIp)
 		}
 
-		glog.Infof("security groups ingress rules deleted for '%s': '%s', pod IP: %s", key.Key, key.Annotation, key.CidrIp)
 		return nil
 	}
 
@@ -239,13 +230,17 @@ func (c *Controller) process(key Task) error {
 			GroupId: aws.String(id),
 	    IpPermissions: rules[id],
 	  })
+
 		if err != nil {
-			glog.Info(err)
+			if !strings.Contains(err.Error(), "InvalidPermission.Duplicate") {
+				glog.Info(err)
+			}
+			continue
 		}
+		glog.Infof("ingress rules of security group %s created: %s, key: %s, pod IP: %s", id, key.Annotation, key.Key, key.CidrIp)
+		c.recorder.Eventf(obj.(*corev1.Pod), corev1.EventTypeNormal, "pod created", "ingress rules of security group %s created: %s", id, key.Annotation)
 	}
 
-	glog.Infof("security groups ingress rules created for '%s': '%s', pod IP: %s", key.Key, key.Annotation, key.CidrIp)
-	c.recorder.Eventf(obj.(*corev1.Pod), corev1.EventTypeNormal, "pod created", "security groups ingress rules created: %s", key.Annotation)
 	return nil
 
 }

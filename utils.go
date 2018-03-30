@@ -28,7 +28,7 @@ func fromAnnotationsToRules(annotations, cidrIp, description string) map[string]
 						SetToPort(to).
 						SetIpRanges([]*ec2.IpRange{
 								{
-									CidrIp: aws.String(cidrIp),
+									CidrIp: aws.String(cidrIp + "/32"),
 									Description: aws.String(description),
 								},
 						})
@@ -43,7 +43,7 @@ func fromAnnotationsToRules(annotations, cidrIp, description string) map[string]
 						SetToPort(from).
 						SetIpRanges([]*ec2.IpRange{
 								{
-									CidrIp: aws.String(cidrIp),
+									CidrIp: aws.String(cidrIp + "/32"),
 									Description: aws.String(description),
 								},
 						})

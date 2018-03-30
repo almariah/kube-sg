@@ -35,18 +35,17 @@ Now, if access is required to other AWS resources from the pods within the smame
 
 kube-sg will add, remove, update ingress rules form the specified security groups in pod templates based on annotations. To add ingress rules to specific security groups and ports:
 
-Add `sg.amazonaws.com/<SECURITY_GROUP_ID>` annotation to your pods with the rules that you want to add to security groups:
+Add `sg.amazonaws.com` annotation to your pods with the ingress rules that you want to add to security groups:
 ```yaml
 ...
 kind: Pod
 metadata:
 annotations:
-  sg.amazonaws.com/sg-1a2b3c4d: tcp:5000-5050,tcp:443
-  sg.amazonaws.com/sg-4a3b2c1d: udp:7000-7005
+  sg.amazonaws.com: sg-1a2b3c4d:tcp:5000-5050,sg-1a2b3c4d:tcp:443,sg-4a3b2c1d:udp:7000-7005
 ...
 ```
 
-You can add comma-separated list of protocol and port combination to set multiple ingress rules for the same security group.
+You can add comma-separated list of security group ID, protocol and port combinations to set multiple ingress rules for the same security group.
 
 When creating higher-level abstractions than pods, you need to pass the annotations in the pod template of the
 resource spec.
@@ -57,8 +56,7 @@ spec:
   template:
     metadata:
       annotations:
-        sg.amazonaws.com/sg-1a2b3c4d: tcp:5000-5050,tcp:443
-        sg.amazonaws.com/sg-4a3b2c1d: udp:7000-7005
+        sg.amazonaws.com: sg-1a2b3c4d:tcp:5000-5050,sg-1a2b3c4d:tcp:443,sg-4a3b2c1d:udp:7000-7005
 ...
 ```
 
