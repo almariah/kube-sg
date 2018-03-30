@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-app: kube-sg
+  name: kube-sg
+  namespace: kube-system
+
+---
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: kube-sg
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","list","watch"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: RoleBinding
+metadata:
+  name: kube-sg
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kube-sg
+subjects:
+- kind: ServiceAccount
+  name: kube-sg
+
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-sg
+  namespace: kube-system
+spec:
+  tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/master
+  nodeSelector:
+    kubernetes.io/role: master
+  containers:
+  - image: abdullahalmariah/kube-sg:v0.0.1-alpha
+    imagePullPolicy: Always
+    name: kube-sg
+    args:
+      - -logtostderr=true
+      - -v=2
+      - -clustername=kubernetes-cluster
+  restartPolicy: Always
