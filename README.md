@@ -31,7 +31,7 @@ In case of AWS, if pods IPs allocated from the VPC pool ([amazon-vpc-cni-k8s](ht
 
 ### Accessing from pod to external resources (kube-sg)
 
-Now, if access is required to other AWS resources from the pods within the smame VPC, then ingress rules should be added to security groups that is attached to these resources. The rules will be very dynamic if it is restrictive and allow only IP addresses of specific pods.
+Now, if access is required to other AWS resources from the pods within the same VPC, then ingress rules should be added to security groups that is attached to these resources. The rules will be very dynamic if it is restrictive and allow only IP addresses of specific pods.
 
 kube-sg will add, remove, update ingress rules form the specified security groups in pod templates based on annotations. To add ingress rules to specific security groups and ports:
 
@@ -64,7 +64,7 @@ spec:
 
 **Note: kube-sg assumes that pods IPs allocated from the same VPC pool where your resources are located or pods and resources are in the same network.**
 
-To install kube-sg: first maek sure that you attach the following IAM policy to the master node:
+To install kube-sg: first make sure that you attach the following IAM policy to the master node:
 ```json
 {
             "Action": [
